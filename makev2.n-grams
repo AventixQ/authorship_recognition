@@ -1,0 +1,190 @@
+#!/usr/bin/perl
+
+# takes passages from stdin and makes a n-gram dictionary for n=1,2,3
+#  -- a given document frequency threshold is applied,
+#     which is an OBLIGATORY PARAMETER of the program  
+#  -- creates an output file in csv format (tab separated)
+
+use strict;
+use warnings;
+
+################################################################################
+# PARAMETERS
+my $DF_threshold = $ARGV[0];        # only n-grams with df >= $DF_threshold
+                                    # will be selected
+
+my $fname = "ngrams.df$DF_threshold.csv";   # output file name
+
+my $VERBOSIVE = 0;                  # if set to 1, verbosive output is produced
+
+################################################################################
+
+my %cf;                         # $cf{n-gram} ... collection frequency
+my %df;                         # $df{n-gram} ... document frequency
+my %tf;                         # $tf{pid}{n-gram} ... term frequency
+my %author;                     # $author{pid} ... author of the passage
+
+my ($phead, $pid, $plen);       # passage header, passage id, passage length
+my ($t1, $t2, $t3);             # three tokens
+
+my $pcount = 0;                 # total passage count
+my $tcount = 0;                 # total token count 
+
+
+while( my $line = <STDIN> ) {
+
+    if( $line =~ /<passage .*pid=\"(\d+)\".*author=\"(\d+)\"/ ) {         
+        # the first passage begins
+        $phead = $line;
+        $pcount++;
+        $pid = $1;
+        $author{$pid} = $2;
+        $plen = 0;
+
+        # just to read and process first three tokens
+        while( $line = <STDIN> ) {
+            if( $line =~ /<token>(.+)<\/token>/ ) {
+                $t1 = $1;                               # the first token
+                $plen++;
+                
+                # first unigram
+                $cf{$t1}++;
+                $df{$t1}++;
+                $tf{$pid}{$t1}++;
+                
+                last; 
+            }
+        }
+        while( $line = <STDIN> ) {
+            if( $line =~ /<token>(.+)<\/token>/ ) {
+                $t2 = $1;                               # the second token
+                $plen++;
+
+                # second unigram
+                $cf{$t2}++;
+                if( not exists($tf{$pid}{$t2}) ) {
+                    $df{$t2}++;
+                }
+                $tf{$pid}{$t2}++;
+                
+                # first bigram
+                $cf{"$t1 $t2"}++;
+                $df{"$t1 $t2"}++;
+                $tf{$pid}{"$t1 $t2"}++;
+                
+                last; 
+            }
+        }
+        while( $line = <STDIN> ) {
+            if( $line =~ /<token>(.+)<\/token>/ ) {
+                $t3 = $1;                               # the third token
+                $plen++;
+
+                # third unigram
+                $cf{$t3}++;
+                if( not exists($tf{$pid}{$t3}) ) {
+                    $df{$t3}++;
+                }
+                $tf{$pid}{$t3}++;
+                
+                # second bigram
+                $cf{"$t2 $t3"}++;
+                if( not exists($tf{$pid}{"$t2 $t3"}) ) {
+                    $df{"$t2 $t3"}++;
+                }
+                $tf{$pid}{"$t2 $t3"}++;
+                
+                # first trigram
+                $cf{"$t1 $t2 $t3"}++;
+                $df{"$t1 $t2 $t3"}++;
+                $tf{$pid}{"$t1 $t2 $t3"}++;
+                
+                last; 
+            }
+        }
+
+        # print "\tfirst trigram in the passage = \"$t1 $t2 $t3\"\n\n";
+        
+    }   # first trigram of the passage read and processed
+
+
+    # read tokens until the end of the passage
+    while( $line = <STDIN> ) {
+        if( $line =~ /<\/passage>/ ) {              # end of the passage
+            last;
+        }
+        if( $line =~ /<token>(.+)<\/token>/ ) {
+            $t1 = $t2;
+            $t2 = $t3;
+            $t3 = $1;                               # next token
+            $plen++;
+
+            # next unigram
+            $cf{$t3}++;
+            if( not exists($tf{$pid}{$t3}) ) {
+                $df{$t3}++;
+            }
+            $tf{$pid}{$t3}++;
+                
+            # next bigram
+            $cf{"$t2 $t3"}++;
+            if( not exists($tf{$pid}{"$t2 $t3"}) ) {
+                $df{"$t2 $t3"}++;
+            }
+            $tf{$pid}{"$t2 $t3"}++;
+                
+            # next trigram
+            $cf{"$t1 $t2 $t3"}++;
+            if( not exists($tf{$pid}{"$t1 $t2 $t3"}) ) {
+                $df{"$t1 $t2 $t3"}++;
+            }
+            $tf{$pid}{"$t1 $t2 $t3"}++;
+        }
+               
+    }   # end of the passage; all n-gram of the passage read and processed
+
+    $tcount = $tcount + $plen;
+
+    if( $VERBOSIVE ) {
+        print $phead;                                        
+        print  "* pid = $pid\t author $author{$pid}\t real length = $plen\n";         # without empty tokens
+        printf "* Number of cf keys: %d\n", scalar keys %cf;
+        printf "* Number of tf{%s} keys: %d\n", $pid, scalar keys %{ $tf{$pid} };
+        print "\n";
+        # print "cf keys: ", join(" | ", keys %cf), "\n";
+    }
+
+}   # all passages read and processed
+
+
+##################################################################
+# FINAL LISTING and OUTPUT FILE
+
+open(OUT, ">", $fname)
+    or die "Can't open output file $fname: $!";
+print OUT "feature\tngram\tcf\tdf\n";
+
+
+#print  "* Number of passages processed = $pcount\n";
+#printf "* Number of different (1,2,3)-grams found = %d\n", scalar keys %cf;
+#print  "* Total tokens processed = $tcount\n";
+#print  "*\n";
+#print  "* N-gram frequencies (sorted by cf, df threshold = $DF_threshold)\n";
+print "N-gram\tname\tcf\tdf\n";
+
+my $count;
+foreach my $ngram (sort {$cf{$b}<=>$cf{$a}} keys %cf) {
+    if( $df{$ngram} >= $DF_threshold ) {
+
+        printf "%d \t%s \t%d  \t%d \n", 
+            ++$count,
+            "$ngram", $cf{$ngram}, $df{$ngram};
+                       
+        print OUT "f$count\t$ngram\t$cf{$ngram}\t$df{$ngram}\n";
+    }       
+}
+print "\n";
+
+close(OUT);
+ 
+
